@@ -1,0 +1,8 @@
+################################################################################
+#                                                                              #
+#        this file will be prefixed to the config created by lxc-screen        #
+#                                                                              #
+################################################################################
+
+## show the name of the tabs in a status-line ##
+hardstatus alwayslastline "%?%{wk}%-Lw%?%{yK}%n*%f %t%?(%u)%?%?%{wk}%+Lw%?"

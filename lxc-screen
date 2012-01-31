@@ -1,0 +1,94 @@
+#!/bin/bash
+
+################################################################################
+# lxc-screen opens your lxc-instances into one screen-tab each                 #
+#                                                                              #
+# expects:                                                                     #
+# * every vm has an single, unique name, used for:                             #
+#  * directory-name /var/lib/lxc/$NAME                                         #
+#  * lxc.utsname in /var/lib/lxc/$NAME/config                                  #
+#  * the names can be resolved by $(host) => via nameserver or resolv.conf     #
+#                                                                              #
+# * screen, host, awk, bash are available                                      #
+################################################################################
+
+
+### config ###
+
+## This configuration will handle all vms with IPs from 10.0.44.2 to 10.0.44.10 ##
+## change this (IP_SET) to your requirements ##
+SUBNET=10.0.44.
+IP_RANGE=$(seq 2 10)
+IP_SET=$(for NR in $IP_RANGE; do echo $SUBNET$NR; done)
+## a simple set is possible too ##
+#IP_SET="192.168.23.42 192.168.42.23"
+
+## If the nameserver is a vm, it should be started first ##
+START_NS=ns-private
+## it's optional ##
+#START_NS=""
+
+## you don't need to change this ##
+CONFIG_TMP=/tmp/.lxc-screenrc
+## this file is the default screenrc used (prefixed to the one created by us) ##
+CONFIG_DEFAULT=~/.lxc-screenrc
+
+
+### start the nameserver (if it's a configured lxc-vm) ###
+
+if test -n "$START_NS"; then
+	lxc-start -d -n $START_NS
+	
+	echo -n 'Wait for nameserver'
+	while ! ping -c1 $START_NS >/dev/null 2>/dev/null; do
+		sleep 1
+		echo -n ' .'
+	done
+	echo ' [OK]'
+fi
+
+
+### create temporary screenrc ###
+
+# use users default config if available #
+cp $CONFIG_DEFAULT $CONFIG_TMP || touch $CONFIG_TMP
+echo >> $CONFIG_TMP
+
+# return hostname of an ip-address #
+function hostname_by_ip() {
+	host $1 | awk "{print \$NF}" | awk -F"." "{print \$1}"
+}
+# when not able to resolve, it will return $RESOLVE_ERROR" #
+RESOLVE_ERROR="3(NXDOMAIN)"
+
+function append_to_screenrc() {
+	echo -en $@ >> $CONFIG_TMP
+}
+
+# create an entry in screenrc for every host #
+for IP in $IP_SET; do
+	NR=$(echo $IP | awk -F"." "{print \$NF}")
+	HOSTNAME=$(hostname_by_ip $IP)
+
+	if test $HOSTNAME = $RESOLVE_ERROR; then
+		echo "Unable to resolve $IP"
+	else
+		append_to_screenrc "screen -t $HOSTNAME $NR bash -c '"
+				   # try to connect to this host #
+		append_to_screenrc " ssh $HOSTNAME || "
+				   # when failed, ask and try to start it #
+		append_to_screenrc " ("
+		append_to_screenrc "  echo \"Start this host? [Y|n]\"; read START;"
+		append_to_screenrc "  test \"\$START\" = n || lxc-start -n $HOSTNAME"
+		append_to_screenrc " )"
+		append_to_screenrc "'\n"
+	fi
+done
+
+
+### a tab is opend for the hypervisor ###
+append_to_screenrc "screen -t hv 0 bash -c 'cd /var/lib/lxc/; bash'"
+
+
+### reattach or open new screen-session ###
+screen -rd -S lxc-screen || screen -S lxc-screen -c $CONFIG_TMP
